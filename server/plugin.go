@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
+	"strings"
 	"sync"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
@@ -20,9 +20,42 @@ type Plugin struct {
 	configuration *configuration
 }
 
-// ServeHTTP demonstrates a plugin that handles HTTP requests by greeting the world.
-func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, "Hello, world!")
-}
+const EMAIL = "@mattermost.com"
 
-// See https://developers.mattermost.com/extend/plugins/server/reference/
+func (p *Plugin) MessageWillBePosted(c *plugin.Context, post *model.Post) (*model.Post, string) {
+	channel, err := p.API.GetChannel(post.ChannelId)
+	if err != nil {
+		// Don't block posts in case of error
+		return post, ""
+	}
+
+	if channel.Type != model.ChannelTypeDirect {
+		return post, ""
+	}
+
+	members, err := p.API.GetChannelMembers(channel.Id, 0, 2)
+	if err != nil || len(members) != 2 {
+		return post, ""
+	}
+
+	user1, err := p.API.GetUser(members[0].UserId)
+	if err != nil {
+		return post, ""
+	}
+
+	user2, err := p.API.GetUser(members[1].UserId)
+	if err != nil {
+		return post, ""
+	}
+
+	if strings.HasSuffix(user1.Email, EMAIL) && strings.HasSuffix(user2.Email, EMAIL) {
+		p.API.SendEphemeralPost(post.UserId, &model.Post{
+			ChannelId: post.ChannelId,
+			Message:   "Contact your colleagues in the hub server",
+			RootId:    post.RootId,
+		})
+		return nil, "plugin.message_will_be_posted.dismiss_post"
+	}
+
+	return post, ""
+}
